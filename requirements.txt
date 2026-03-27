@@ -1,2 +1,3 @@
-pychrome
+pytesseract
+Pillow
 pyautogui
