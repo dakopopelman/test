@@ -48,6 +48,8 @@ pyautogui.PAUSE = 0
 # ---------------------------------------------------------------------------
 # Chrome executable candidates per platform
 # ---------------------------------------------------------------------------
+DEFAULT_PORT = 9222
+
 _CHROME_CANDIDATES = {
     "Windows": [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -132,11 +134,11 @@ def _find_chrome_executable() -> str | None:
     return None
 
 
-def _launch_chrome(exe: str) -> subprocess.Popen:
-    """Start Chrome with remote debugging on port 9222."""
+def _launch_chrome(exe: str, port: int) -> subprocess.Popen:
+    """Start Chrome with remote debugging on the given port."""
     args = [
         exe,
-        "--remote-debugging-port=9222",
+        f"--remote-debugging-port={port}",
         "--no-first-run",
         "--no-default-browser-check",
     ]
@@ -180,22 +182,28 @@ class TextFinderApp:
                   font=("Arial", 15, "bold")).grid(
             row=0, column=0, columnspan=3, pady=(0, 10))
 
+        # port input
+        ttk.Label(outer, text="Debug port:").grid(row=1, column=0, sticky="w", **pad)
+        self._port_var = tk.StringVar(value=str(DEFAULT_PORT))
+        port_entry = ttk.Entry(outer, textvariable=self._port_var, width=7)
+        port_entry.grid(row=1, column=1, sticky="w", **pad)
+
         # search input
-        ttk.Label(outer, text="Find text:").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(outer, text="Find text:").grid(row=2, column=0, sticky="w", **pad)
         self._search_var = tk.StringVar()
         entry = ttk.Entry(outer, textvariable=self._search_var, width=38, font=("Arial", 11))
-        entry.grid(row=1, column=1, columnspan=2, sticky="ew", **pad)
+        entry.grid(row=2, column=1, columnspan=2, sticky="ew", **pad)
         entry.bind("<Return>", lambda _e: self._search())
         entry.focus_set()
 
         # case-sensitive toggle
         self._case_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(outer, text="Case sensitive",
-                        variable=self._case_var).grid(row=2, column=1, sticky="w", padx=8)
+                        variable=self._case_var).grid(row=3, column=1, sticky="w", padx=8)
 
         # navigation buttons
         btn_row = ttk.Frame(outer)
-        btn_row.grid(row=3, column=0, columnspan=3, pady=8)
+        btn_row.grid(row=4, column=0, columnspan=3, pady=8)
 
         self._find_btn = ttk.Button(btn_row, text="Find", width=12, command=self._search)
         self._find_btn.pack(side="left", padx=4)
@@ -211,18 +219,18 @@ class TextFinderApp:
         # match counter
         self._counter_var = tk.StringVar()
         ttk.Label(outer, textvariable=self._counter_var,
-                  font=("Arial", 9)).grid(row=4, column=0, columnspan=3, pady=2)
+                  font=("Arial", 9)).grid(row=5, column=0, columnspan=3, pady=2)
 
         # status bar
         self._status_var = tk.StringVar(value="Connecting to Chrome…")
         self._status_lbl = ttk.Label(outer, textvariable=self._status_var,
                                      foreground="gray", font=("Arial", 9),
                                      wraplength=400, justify="left")
-        self._status_lbl.grid(row=5, column=0, columnspan=3, pady=(4, 0))
+        self._status_lbl.grid(row=6, column=0, columnspan=3, pady=(4, 0))
 
         # Chrome connection panel
         conn_box = ttk.LabelFrame(outer, text="Chrome connection", padding=8)
-        conn_box.grid(row=6, column=0, columnspan=3, pady=(12, 0), sticky="ew")
+        conn_box.grid(row=7, column=0, columnspan=3, pady=(12, 0), sticky="ew")
 
         self._launch_btn = ttk.Button(conn_box, text="Launch Chrome with debugging",
                                       command=self._launch_chrome_clicked)
@@ -232,9 +240,9 @@ class TextFinderApp:
                                          command=self._reconnect)
         self._reconnect_btn.pack(side="left")
 
-        # manual-launch hint (collapsed by default)
+        # manual-launch hint
         hint_box = ttk.LabelFrame(outer, text="Manual launch commands", padding=8)
-        hint_box.grid(row=7, column=0, columnspan=3, pady=(8, 0), sticky="ew")
+        hint_box.grid(row=8, column=0, columnspan=3, pady=(8, 0), sticky="ew")
         hint = (
             "Windows / Linux:\n"
             "  chrome --remote-debugging-port=9222\n\n"
@@ -253,10 +261,21 @@ class TextFinderApp:
         self._status_var.set(msg)
         self._status_lbl.config(foreground=color)
 
-    def _connect(self) -> bool:
-        """Try to connect to Chrome on port 9222. Returns True on success."""
+    def _port(self) -> int:
         try:
-            browser = pychrome.Browser(url="http://127.0.0.1:9222")
+            p = int(self._port_var.get().strip())
+            if 1 <= p <= 65535:
+                return p
+        except ValueError:
+            pass
+        self._port_var.set(str(DEFAULT_PORT))
+        return DEFAULT_PORT
+
+    def _connect(self) -> bool:
+        """Try to connect to Chrome on the configured port. Returns True on success."""
+        port = self._port()
+        try:
+            browser = pychrome.Browser(url=f"http://127.0.0.1:{port}")
             tabs = browser.list_tab()          # raises if Chrome isn't there
             pages = [t for t in tabs if getattr(t, "type", "") == "page"]
             n = len(pages) or len(tabs)
@@ -266,7 +285,7 @@ class TextFinderApp:
         except Exception:
             self._browser = None
             self._set_status(
-                "Not connected. Use 'Launch Chrome with debugging' or 'Reconnect'.",
+                f"Not connected on port {port}. Use 'Launch Chrome with debugging' or 'Reconnect'.",
                 "red",
             )
             return False
@@ -291,7 +310,7 @@ class TextFinderApp:
         self.root.update_idletasks()
 
         try:
-            self._chrome_proc = _launch_chrome(exe)
+            self._chrome_proc = _launch_chrome(exe, self._port())
         except Exception as exc:
             messagebox.showerror("Launch failed", str(exc))
             return
